@@ -2,7 +2,7 @@
 FROM amazoncorretto:21.0.8 AS java-base
 
 # Production runtime — stable tooling layers first for max caching
-FROM oven/bun:1.2.23-slim AS runner
+FROM oven/bun:1.3.9-slim AS runner
 
 # All system dependencies in a single layer
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -27,7 +27,7 @@ RUN mkdir -p ${DUCKDB_DIR} && \
     rm -rf /var/lib/apt/lists/*
 
 # Builder stage
-FROM oven/bun:1.2.23-slim AS builder
+FROM oven/bun:1.3.9-slim AS builder
 COPY --from=java-base /usr/lib/jvm /usr/lib/jvm
 ENV JAVA_HOME=/usr/lib/jvm/java-21-amazon-corretto
 ENV PATH=$JAVA_HOME/bin:$PATH
