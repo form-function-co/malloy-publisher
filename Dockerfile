@@ -6,14 +6,18 @@ FROM oven/bun:1.2.23-slim AS runner
 
 # All system dependencies in a single layer
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates unzip git \
+    curl ca-certificates unzip git tini \
     openssl libcurl4 libssl3 dnsutils iputils-ping file && \
     update-ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 # DuckDB CLI + Snowflake driver + Node 20 LTS
-RUN curl -L https://install.duckdb.org | bash && \
-    ln -s /root/.duckdb/cli/latest/duckdb /usr/local/bin/duckdb && \
+# Install DuckDB to a system-wide path (not /root/) so it works with non-root users
+ENV DUCKDB_DIR=/opt/duckdb
+RUN mkdir -p ${DUCKDB_DIR} && \
+    HOME=${DUCKDB_DIR} curl -L https://install.duckdb.org | HOME=${DUCKDB_DIR} bash && \
+    cp ${DUCKDB_DIR}/.duckdb/cli/latest/duckdb /usr/local/bin/duckdb && \
+    chmod +x /usr/local/bin/duckdb && \
     curl -sSL https://raw.githubusercontent.com/iqea-ai/duckdb-snowflake/main/scripts/install-adbc-driver.sh | bash && \
     ldconfig && \
     duckdb -c "INSTALL snowflake FROM community; LOAD snowflake; SELECT snowflake_version();" || \
@@ -70,10 +74,32 @@ COPY --from=builder /publisher/packages/sdk/package.json /publisher/packages/sdk
 # Install production-only deps
 RUN bun install --production
 
+# Create non-root user for Cloud Run security best practices
+RUN groupadd -r publisher && useradd -r -g publisher -d /home/publisher -s /bin/bash publisher
+
+# Create writable directories for runtime data
+# - /tmp is always writable (used for DuckDB temp files)
+# - /home/publisher for user home dir (Bun cache, etc.)
+# - /publisher/publisher_data for uploaded packages
+RUN mkdir -p /etc/publisher /home/publisher /publisher/publisher_data && \
+    chown -R publisher:publisher /home/publisher /publisher
+
 # Runtime config
 ENV NODE_ENV=production
-ENV PATH="/root/.duckdb/cli/latest:$PATH"
-RUN mkdir -p /etc/publisher
+# Reduce glibc memory arena fragmentation — prevents RSS bloat in constrained environments
+ENV MALLOC_ARENA_MAX=2
+# Cloud Run injects PORT; entrypoint maps it to PUBLISHER_PORT
+ENV PUBLISHER_PORT=4000
+# Ensure Bun/Node can find HOME for cache/config
+ENV HOME=/home/publisher
+
+# Copy entrypoint script
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+USER publisher
 EXPOSE 4000
 
+# Use tini as PID 1 for proper signal forwarding to Bun
+ENTRYPOINT ["tini", "--", "/entrypoint.sh"]
 CMD ["bun", "run", "--preload", "./packages/server/dist/instrumentation.js", "./packages/server/dist/server.js"]
