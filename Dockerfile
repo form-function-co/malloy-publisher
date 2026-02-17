@@ -74,15 +74,8 @@ COPY --from=builder /publisher/packages/sdk/package.json /publisher/packages/sdk
 # Install production-only deps
 RUN bun install --production
 
-# Create non-root user for Cloud Run security best practices
-RUN groupadd -r publisher && useradd -r -g publisher -d /home/publisher -s /bin/bash publisher
-
 # Create writable directories for runtime data
-# - /tmp is always writable (used for DuckDB temp files)
-# - /home/publisher for user home dir (Bun cache, etc.)
-# - /publisher/publisher_data for uploaded packages
-RUN mkdir -p /etc/publisher /home/publisher /publisher/publisher_data && \
-    chown -R publisher:publisher /home/publisher /publisher
+RUN mkdir -p /etc/publisher /publisher/publisher_data
 
 # Runtime config
 ENV NODE_ENV=production
@@ -90,14 +83,11 @@ ENV NODE_ENV=production
 ENV MALLOC_ARENA_MAX=2
 # Cloud Run injects PORT; entrypoint maps it to PUBLISHER_PORT
 ENV PUBLISHER_PORT=4000
-# Ensure Bun/Node can find HOME for cache/config
-ENV HOME=/home/publisher
 
 # Copy entrypoint script
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-USER publisher
 EXPOSE 4000
 
 # Use tini as PID 1 for proper signal forwarding to Bun
